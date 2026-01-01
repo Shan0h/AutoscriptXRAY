@@ -86,11 +86,11 @@ autoscript_znand/
 
 | OS           | Status    |
 |--------------|-----------|
-| Debian 10    | ✅ Supported |
-| Debian 11    | ✅ Supported |
-| Ubuntu 20.04 | ✅ Supported |
-| Ubuntu 22.04 | ✅ Supported |
+| Debian 12    | ✅ Supported |
+| Debian 11    | ❌ Supported |
+| Ubuntu 20.04 | ❌ Supported |
+| Ubuntu 22.04 | ❌ Supported |
 | OpenVZ       | ❌ Not supported |
-| KVM/VMWare   | ✅ Recommended |
+| KVM/VMWare   | ❌ Recommended |
 
 ---

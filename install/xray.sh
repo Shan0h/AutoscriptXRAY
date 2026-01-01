@@ -1,56 +1,70 @@
 #!/bin/bash
-# Setup Xray Core - by znand-dev
+# Setup Xray Core - optimized for Debian 12
+# by znand-dev / Gemini
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}▶️ Memulai instalasi Xray-core...${NC}"
+echo -e "${GREEN}▶️ Memulai instalasi Xray-core pada Debian 12...${NC}"
 sleep 1
 
-# Install dependensi
+# 1. Update & Install Dependencies
+# Added 'net-tools' and 'dbus' for better service management on Debian 12
 apt update -y
-apt install -y socat curl cron jq unzip gnupg coreutils lsof -qq
+export DEBIAN_FRONTEND=noninteractive
+apt install -y socat curl cron jq unzip gnupg coreutils lsof net-tools -qq
 
-# Download Xray-core terbaru
+# 2. Download Xray-core terbaru
 mkdir -p /etc/xray /var/log/xray /usr/local/bin
 
 echo -e "${GREEN}⬇️ Download Xray-core...${NC}"
+# Use the correct binary for 64-bit architecture
 wget -q -O /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
 unzip -o /tmp/xray.zip -d /usr/local/bin/
 chmod +x /usr/local/bin/xray
 rm -f /tmp/xray.zip
 
-# Konfigurasi domain
+# 3. Konfigurasi domain
+# Check multiple possible locations for the domain file
 if [[ -f /root/domain ]]; then
   domain=$(cat /root/domain)
+elif [[ -f /etc/xray/domain ]]; then
+  domain=$(cat /etc/xray/domain)
 else
-  echo -e "${RED}[ERROR] File /root/domain tidak ditemukan!${NC}"
-  exit 1
+  echo -e "${RED}[ERROR] File domain tidak ditemukan! Masukkan domain secara manual.${NC}"
+  read -rp "Domain: " domain
+  echo "$domain" > /root/domain
 fi
 
 echo "$domain" > /etc/xray/domain
 
-# Install & issue cert via acme.sh
-if [ ! -f /root/.acme.sh/acme.sh ]; then
+# 4. Install & issue cert via acme.sh
+# Debian 12 requires explicit path handling for root environment
+if [ ! -f "$HOME/.acme.sh/acme.sh" ]; then
   echo -e "${GREEN}🔐 Menginstall acme.sh...${NC}"
-  curl https://acme-install.netlify.app/acme.sh | bash
-  export PATH="$HOME/.acme.sh":$PATH
+  curl https://get.acme.sh | sh -s email=admin@$domain
 fi
 
-chmod +x /root/.acme.sh/acme.sh
+# Define acme command shortcut
+ACME_BIN="$HOME/.acme.sh/acme.sh"
 
-/root/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-/root/.acme.sh/acme.sh --register-account -m admin@$domain
-/root/.acme.sh/acme.sh --issue --standalone -d $domain --keylength ec-256
+# Stop existing services that might use port 80 for certificate issuance
+systemctl stop nginx 2>/dev/null
+systemctl stop xray 2>/dev/null
 
-mkdir -p /etc/xray
-/root/.acme.sh/acme.sh --install-cert -d $domain \
+echo -e "${GREEN}🔐 Issuing SSL Certificate for $domain...${NC}"
+$ACME_BIN --set-default-ca --server letsencrypt
+$ACME_BIN --register-account -m admin@$domain
+$ACME_BIN --issue --standalone -d $domain --keylength ec-256
+
+# Install certificate to Xray directory
+$ACME_BIN --install-cert -d $domain \
   --key-file /etc/xray/private.key \
   --fullchain-file /etc/xray/cert.crt \
   --ecc
 
-# Deploy config.json gaya GIVPN
+# 5. Deploy config.json
 cat > /etc/xray/config.json <<EOF
 {
   "log": {
@@ -111,18 +125,21 @@ cat > /etc/xray/config.json <<EOF
 }
 EOF
 
-# Setup systemd service
+# 6. Setup systemd service (Modified for Debian 12 stability)
 cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
-Description=Xray Service
+Description=Xray Service for Debian 12
 Documentation=https://xray.dev/
 After=network.target nss-lookup.target
 
 [Service]
 User=root
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 ExecStart=/usr/local/bin/xray -config /etc/xray/config.json
 Restart=on-failure
+RestartSec=3s
 LimitNPROC=1000000
 LimitNOFILE=1000000
 
@@ -130,15 +147,16 @@ LimitNOFILE=1000000
 WantedBy=multi-user.target
 EOF
 
+# 7. Start Service
 systemctl daemon-reload
 systemctl enable xray
+systemctl restart xray
 
-# Tambahkan info ke log install
+# 8. Logging
 grep -q "XRAY TLS" /root/log-install.txt || echo "XRAY TLS         : 443" >> /root/log-install.txt
 grep -q "XRAY None TLS" /root/log-install.txt || echo "XRAY None TLS    : 80" >> /root/log-install.txt
 
 # Output final
 echo -e "${GREEN}✅ Xray-core berhasil di-install dan dikonfigurasi!${NC}"
 echo -e "${GREEN}📂 Config: /etc/xray/config.json${NC}"
-echo -e "${GREEN}🔐 Domain: $domain${NC}"
-echo -e "${GREEN}🚀 Jalankan dengan: systemctl start xray${NC}"
+systemctl status xray --no-pager | grep Active
